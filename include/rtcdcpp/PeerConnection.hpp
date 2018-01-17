@@ -57,7 +57,8 @@ struct RTCConfiguration {
 
 class PeerConnection {
   friend class DataChannel;
- public:
+  friend class DTLSWrapper;
+  public:
   struct IceCandidate {
     IceCandidate(const std::string &candidate, const std::string &sdpMid, int sdpMLineIndex)
         : candidate(candidate), sdpMid(sdpMid), sdpMLineIndex(sdpMLineIndex) {}
@@ -82,6 +83,11 @@ class PeerConnection {
   void ParseOffer(std::string offer_sdp);
 
   /**
+   * Generate Offer SDP
+   */
+  std::string GenerateOffer();
+
+  /**
    * Generate Answer SDP
    */
   std::string GenerateAnswer();
@@ -104,7 +110,7 @@ class PeerConnection {
    * TODO: Handle creating data channels before generating SDP, so that the
    *       data channel is created as part of the connection process.
    */
-  //    std::shared_ptr<DataChannel> CreateDataChannel(std::string label);
+  std::shared_ptr<DataChannel> CreateDataChannel(std::string label, std::string protocol="", uint8_t chan_type=DATA_CHANNEL_RELIABLE, uint32_t reliability=0);
 
   /**
    * Notify when remote party creates a DataChannel.
@@ -152,6 +158,7 @@ class PeerConnection {
   // DataChannel message parsing
   void HandleNewDataChannel(ChunkPtr chunk, uint16_t sid);
   void HandleDataChannelClose(uint16_t sid);
+  void HandleDataChannelAck(uint16_t sid);
   void HandleStringMessage(ChunkPtr chunk, uint16_t sid);
   void HandleBinaryMessage(ChunkPtr chunk, uint16_t sid);
 

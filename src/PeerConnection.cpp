@@ -100,9 +100,9 @@ void PeerConnection::ParseOffer(std::string offer_sdp) {
     if (g_str_has_prefix(line.c_str(), "a=setup:")) {
       std::size_t pos = line.find(":") + 1;
       std::string setup = line.substr(pos);
-      if (setup == "active" && this->role == Client) {
+      if (setup == "active\r" && this->role == Client) {
         this->role = Server;
-      } else if (setup == "passive" && this->role == Server) {
+      } else if (setup == "passive\r" && this->role == Server) {
         this->role = Client;
       } else {  // actpass
         // nothing to do
@@ -127,7 +127,31 @@ std::string random_session_id() {
   }
   return result.str();
 }
+std::string PeerConnection::GenerateOffer() {
+  std::stringstream sdp;
+  std::string session_id = random_session_id();
+  SPDLOG_TRACE(logger, "Generating Answer SDP: session_id={}", session_id);
 
+  sdp << "v=0\r\n";
+  sdp << "o=- " << session_id << " 0 IN IP4 0.0.0.0\r\n";  // Session ID
+  sdp << "s=-\r\n";
+  sdp << "t=0 0\r\n";
+  sdp << "a=ice-options:trickle\r\n";
+  sdp << "m=application 54609 DTLS/SCTP 5000\r\n";  // XXX: hardcoded port
+  sdp << "a=msid-semantic: WMS\r\n";
+  sdp << "c=IN IP4 0.0.0.0\r\n";
+  //  sdp << "a=mid:data\r\n";
+  sdp << "a=sendrecv\r\n";
+  // sdp << "a=sctp-port:5000\r\n";
+  // sdp << "a=max-message-size:100000\r\n";
+  sdp << "a=setup:actpass\r\n";
+  sdp << "a=dtls-id:1\r\n";
+  sdp << this->nice->GenerateLocalSDP();
+  sdp << "a=fingerprint:sha-256 " << dtls->certificate()->fingerprint() << "\r\n";
+  sdp << "a=sctpmap:5000 webrtc-datachannel 262144\r\n";
+
+  return sdp.str();
+  }
 std::string PeerConnection::GenerateAnswer() {
   std::stringstream sdp;
   std::string session_id = random_session_id();
@@ -191,7 +215,7 @@ void PeerConnection::OnSCTPMsgReceived(ChunkPtr chunk, uint16_t sid, uint32_t pp
       HandleNewDataChannel(chunk, sid);
     } else if (chunk->Data()[0] == DC_TYPE_ACK) {
       SPDLOG_TRACE(logger, "DC ACK");
-      // HandleDataChannelAck(chunk, sid); XXX: Don't care right now
+      HandleDataChannelAck(sid);
     } else if (chunk->Data()[0] == DC_TYPE_CLOSE) {
       SPDLOG_TRACE(logger, "DC CLOSE");
       HandleDataChannelClose(sid);
@@ -202,6 +226,7 @@ void PeerConnection::OnSCTPMsgReceived(ChunkPtr chunk, uint16_t sid, uint32_t pp
     SPDLOG_TRACE(logger, "String msg");
     HandleStringMessage(chunk, sid);
   } else if ((ppid == PPID_BINARY) || (ppid == PPID_BINARY_EMPTY)) {
+
     SPDLOG_TRACE(logger, "Binary msg");
     HandleBinaryMessage(chunk, sid);
   } else {
@@ -226,17 +251,18 @@ void PeerConnection::HandleNewDataChannel(ChunkPtr chunk, uint16_t sid) {
   open_msg.reliability = (raw_msg[4] << 24) + (raw_msg[5] << 16) + (raw_msg[6] << 8) + raw_msg[7];
   open_msg.label_len = (raw_msg[8] << 8) + raw_msg[9];
   open_msg.protocol_len = (raw_msg[10] << 8) + raw_msg[11];
-
+  uint32_t reliability = open_msg.reliability;
   std::string label(reinterpret_cast<char *>(raw_msg + 12), open_msg.label_len);
   std::string protocol(reinterpret_cast<char *>(raw_msg + 12 + open_msg.label_len), open_msg.protocol_len);
 
   SPDLOG_DEBUG(logger, "Creating channel with sid: {}, chan_type: {}, label: {}, protocol: {}", sid, open_msg.chan_type, label, protocol);
 
   // TODO: Support overriding an existing channel
-  auto new_channel = std::make_shared<DataChannel>(this, sid, open_msg.chan_type, label, protocol);
+  auto new_channel = std::make_shared<DataChannel>(this, sid, open_msg.chan_type, label, protocol, reliability);
 
   data_channels[sid] = new_channel;
-
+  this->sctp->SetDataChannelSID(sid);
+  this->sctp->SendACK(open_msg.chan_type, open_msg.reliability);
   if (this->new_channel_cb) {
     this->new_channel_cb(new_channel);
   } else {
@@ -253,13 +279,26 @@ void PeerConnection::HandleDataChannelClose(uint16_t sid) {
   cur_channel->OnClosed();
 }
 
+void PeerConnection::HandleDataChannelAck(uint16_t sid) {
+  auto new_channel = GetChannel(sid);
+  if (this->new_channel_cb) {
+    this->new_channel_cb(new_channel);
+  } else {
+    logger->warn("No new channel callback, ignoring new channel");
+  }
+  if (!new_channel) {
+    logger->warn("Cannot find the datachannel for sid {}", sid);
+  } else {
+    new_channel->OnOpen();
+  }
+}  
+
 void PeerConnection::HandleStringMessage(ChunkPtr chunk, uint16_t sid) {
   auto cur_channel = GetChannel(sid);
   if (!cur_channel) {
     logger->warn("Received msg on unknown channel: {}", sid);
     return;
   }
-
   std::string cur_msg(reinterpret_cast<char *>(chunk->Data()), chunk->Length());
 
   cur_channel->OnStringMsg(cur_msg);
@@ -295,9 +334,9 @@ void PeerConnection::SendBinaryMsg(const uint8_t *data, int len, uint16_t sid) {
   }
 }
 
-void PeerConnection::CreateDataChannel(std::string label, std::string protocol) {
+std::shared_ptr<DataChannel> PeerConnection::CreateDataChannel(std::string label, std::string protocol, uint8_t chan_type, uint32_t reliability) {
   uint16_t sid;
-  if (this->role == Client) {
+  if (this->role == 0) {
     sid = 0;
     logger->info("Client SID");
   } else {
@@ -314,15 +353,18 @@ void PeerConnection::CreateDataChannel(std::string label, std::string protocol) 
 
   this->sctp->SetDataChannelSID(sid);
   logger->info("Creating DC on SID: {}", sid);
-  auto new_channel = std::make_shared<DataChannel>(this, sid, DATA_CHANNEL_RELIABLE, label, protocol);
+  auto new_channel = std::make_shared<DataChannel>(this, sid, chan_type, label, protocol, reliability);
   data_channels[sid] = new_channel;
 
-  std::thread create_dc = std::thread(&SCTPWrapper::CreateDCForSCTP, sctp.get(), label, protocol);
+  std::thread create_dc = std::thread(&SCTPWrapper::CreateDCForSCTP, sctp.get(), label, protocol, chan_type, reliability);
   logger->info("Spawning create_dc thread");
   create_dc.detach();
+  return new_channel;
 }
+
 void PeerConnection::ResetSCTPStream(uint16_t stream_id) {
   this->sctp->ResetSCTPStream(stream_id, SCTP_STREAM_RESET_OUTGOING);
 }
 
 }
+

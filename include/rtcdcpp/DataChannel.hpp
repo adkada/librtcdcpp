@@ -57,7 +57,7 @@ namespace rtcdcpp {
 #define DATA_CHANNEL_PARTIAL_RELIABLE_TIMED 0x02
 #define DATA_CHANNEL_PARTIAL_RELIABLE_TIMED_UNORDERED 0x82
 
-typedef struct {
+typedef struct __attribute__((packed, aligned(1))) {
   uint8_t msg_type;
   uint8_t chan_type;
   uint16_t priority;
@@ -81,7 +81,7 @@ class DataChannel {
   uint8_t chan_type;
   std::string label;
   std::string protocol;
-
+  uint32_t reliability;
   // TODO: Priority field
 
   std::function<void()> open_cb;
@@ -98,7 +98,7 @@ class DataChannel {
   void OnError(std::string description);
 
  public:
-  DataChannel(PeerConnection *pc, uint16_t stream_id, uint8_t chan_type, std::string label, std::string protocol);
+  DataChannel(PeerConnection *pc, uint16_t stream_id, uint8_t chan_type, std::string label, std::string protocol, uint32_t reliability);
   virtual ~DataChannel();
 
   /**
