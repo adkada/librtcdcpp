@@ -1,10 +1,7 @@
-/.idea/
-/BUILD/
-/examples/.env/
+*.o
+*.d
+*.a
 *.so
+usrsctp/
 spdlog/
-CMakeCache.txt
-CMakeFiles/
-Makefile
-cmake_install.cmake
-testclient
+
