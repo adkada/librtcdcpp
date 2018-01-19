@@ -12,50 +12,37 @@ Why
 
 Because building the WebRTC libraries from Chromium can be a real PITA, and slimming it down to just DataChannels can be really tough.
 
-
 Dependencies
 ------------
 
  - libnice - https://github.com/libnice/libnice
- - usrsctp - https://github.com/sctplab/usrsctp
  - openssl - https://www.openssl.org/
- - spdlog  - https://github.com/gabime/spdlog. Header-only. Optional.
+
+Submodules:
+ - usrsctp - https://github.com/sctplab/usrsctp
+ - spdlog - https://github.com/gabime/spdlog
 
 Building
 --------
 
 ### Linux:
 ```
-  mkdir ./build && cd build
-  cmake ..
+  git submodule update --init --recursive
   make
 ```
-You may need to pass some variables to cmake that tells it about the dependencies etc. This may not be necessary if you install the dependencies system wide. Here's an example:
-```
-cmake -DLIBNICE_LIBRARY=./libnice.so -DUSRSCTP_LIBRARY=./libusrsctp.so -DLIBNICE_INCLUDE_DIR="./libnice/nice/;./libnice/agent/;./libnice/;" -DUSRSCTP_INCLUDE_DIR=./usrsctp/usrsctplib -DSPDLOG_INCLUDE_DIR="./spdlog/include/" -DDISABLE_SPDLOG=off -DCMAKE_BUILD_TYPE=Debug 
- ```
- Disable spdlog by passing `-DDISABLE_SPDLOG=on`
  
 **TODO**: deb and rpm packages
 
 ### Mac:
 
-**TODO**: homebrew integration
-```
-  brew install ...
-  ./configure
-  make
-  sudo make install
-```
+**TODO**
 
 ### Windows:
 
-**TODO**: Visual studio integration, or a script like that jsoncpp library does
-
- - We recommend you just copy-paste the cpp and hpp files into your own project and go from there
-
+**TODO**
 
 Licensing
 ---------
 
 BSD style - see the accompanying LICENSE file for more information
+
