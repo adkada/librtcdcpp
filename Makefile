@@ -6,10 +6,10 @@ AR=$(CROSS)ar
 RM=rm -f
 USRSCTPLIB=usrsctp/usrsctplib/.libs/libusrsctp.a
 CLIENTDIR=examples/websocket_client
-INCLUDES=$(shell pkg-config --cflags glib-2.0) -Iinclude -Iusrsctp/usrsctplib -Ispdlog/include
-CPPFLAGS=-std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -O2
-LDFLAGS=-shared
-LDLIBS=$(shell pkg-config --cflags glib-2.0) -lpthread -lnice $(USRSCTPLIB)
+INCLUDES=$(shell pkg-config --cflags glib-2.0 gobject-2.0 nice) -Iinclude -Iusrsctp/usrsctplib -Ispdlog/include
+CPPFLAGS=-pthread -std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -O2
+LDFLAGS=-pthread -shared
+LDLIBS=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice) $(USRSCTPLIB)
 
 SRCS=$(shell printf "%s " src/*.cpp)
 OBJS=$(subst .cpp,.o,$(SRCS)) 
