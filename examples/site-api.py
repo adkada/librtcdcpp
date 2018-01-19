@@ -1,7 +1,6 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Sets up a basic site that can allow two browsers to connect to each
 # other via WebRTC DataChannels, sending connection events via WebSockets.
-
 
 from flask import Flask, send_from_directory
 from flask_sockets import Sockets
@@ -19,13 +18,13 @@ def channel_socket(ws, name):
     else:
         channels[name] = [ws]
 
-    print "Got new websocket on channel", name
+    print("Got new websocket on channel", name)
 
     ws.send(json.dumps({"type": "hello", "msg": "From the server"}))
 
     while not ws.closed:
         message = ws.receive()
-        print "Got msg:", message
+        print("Got msg:", message)
 
         if message is None:
             continue
