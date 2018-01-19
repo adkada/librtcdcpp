@@ -4,37 +4,42 @@ CC=$(CROSS)gcc
 CXX=$(CROSS)g++
 AR=$(CROSS)ar
 RM=rm -f
+USRSCTPLIB=usrsctp/usrsctplib/.libs/libusrsctp.a
+CLIENTDIR=examples/websocket_client
 INCLUDES=$(shell pkg-config --cflags glib-2.0) -Iinclude -Iusrsctp/usrsctplib -Ispdlog/include
-CPPFLAGS=$(INCLUDES) -std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -O2
+CPPFLAGS=-std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -O2
 LDFLAGS=-shared
-LDLIBS=$(shell pkg-config --cflags glib-2.0) -lpthread -lnice -Llibusrsctp.a
+LDLIBS=$(shell pkg-config --cflags glib-2.0) -lpthread -lnice $(USRSCTPLIB)
 
 SRCS=$(shell printf "%s " src/*.cpp)
 OBJS=$(subst .cpp,.o,$(SRCS)) 
 
-all: $(NAME).a $(NAME).so
+all: $(NAME).a $(NAME).so $(CLIENTDIR)/testclient
 
 %.o: %.cpp
-	$(CXX) $(CPPFLAGS) -I. -MMD -MP -o $@ -c $<
+	$(CXX) $(INCLUDES) $(CPPFLAGS) -I. -MMD -MP -o $@ -c $<
 
 -include $(subst .o,.d,$(OBJS))
 
-$(NAME).a: libusrsctp.a $(OBJS)
-	$(AR) crf $(NAME).a libusrsctp.a $(OBJS)
+$(NAME).a: $(USRSCTPLIB) $(OBJS)
+	$(AR) crf $@ $(USRSCTPLIB) $(OBJS)
 
-$(NAME).so: libusrsctp.a $(OBJS)
-	$(CXX) $(LDFLAGS) -o $(NAME).so $(OBJS) $(LDLIBS)
+$(NAME).so: $(USRSCTPLIB) $(OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
+
+$(CLIENTDIR)/testclient: $(NAME).a
+	cd $(CLIENTDIR) && $(MAKE)
 
 clean:
 	$(RM) src/*.o src/*.d
+	cd $(CLIENTDIR) && make clean
 
 dist-clean: clean
-	$(RM) libusrsctp.a
 	$(RM) $(NAME).a
 	$(RM) $(NAME).so
 	$(RM) src/*~
+	cd $(CLIENTDIR) && make dist-clean
 
-libusrsctp.a:
-	cd usrsctp && ./bootstrap && ./configure --enable-static && make
-	cp usrsctp/usrsctplib/.libs/libusrsctp.a .
+$(USRSCTPLIB): 
+	cd usrsctp && ./bootstrap && CPPFLAGS=-fPIC ./configure --enable-static && make
 

@@ -2,4 +2,7 @@
 *.d
 *.a
 *.so
+examples/websocket_client/testclient
+examples/websocket_client/testclient_answer
+examples/websocket_client/testclient_offer
 
