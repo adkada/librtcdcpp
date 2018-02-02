@@ -6,8 +6,7 @@ RM=rm -f
 INCLUDES=-I../../include -I../../spdlog/include
 CPPFLAGS=-pthread -std=c++14 -Wall -Wno-reorder -Wno-sign-compare -O2
 LDFLAGS=-pthread
-LDLIBS=-lssl -lcrypto ../../librtcdcpp.a
-LDLIBS+=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice) ../../usrsctp/usrsctplib/.libs/libusrsctp.a
+LDLIBS=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice) -lssl -lcrypto ../../librtcdcpp.a ../../libusrsctp.a
 
 SRCS=WebSocketWrapper.cpp easywsclient.cpp jsoncpp.cpp
 OBJS=$(subst .cpp,.o,$(SRCS)) 
