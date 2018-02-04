@@ -26,10 +26,122 @@
  */
 
 /**
- * Simple wrapper around OpenSSL Certs.
+ * Simple wrapper around GnuTLS or OpenSSL Certs.
  */
 
 #include "rtcdcpp/RTCCertificate.hpp"
+
+#include <cassert>
+#include <ctime>
+
+#ifdef USE_GNUTLS
+
+#include <gnutls/crypto.h>
+
+namespace rtcdcpp {
+
+using namespace std;
+
+static void check_gnutls(int ret, const std::string &message = "GnuTLS error") {
+  if(ret != GNUTLS_E_SUCCESS)
+    throw std::runtime_error(message + ": " + gnutls_strerror(ret));
+}
+
+static gnutls_certificate_credentials_t *create_creds() { 
+  auto pcreds = new gnutls_certificate_credentials_t;
+  check_gnutls(gnutls_certificate_allocate_credentials(pcreds));
+  return pcreds;
+}
+
+static void delete_creds(gnutls_certificate_credentials_t *pcreds) {
+  gnutls_certificate_free_credentials(*pcreds);
+  delete pcreds;
+}
+
+static std::string GenerateFingerprint(gnutls_x509_crt_t crt) {
+  const size_t bufSize = 32;
+  unsigned char buf[bufSize];
+  size_t len = bufSize;
+  check_gnutls(gnutls_x509_crt_get_fingerprint(crt, GNUTLS_DIG_SHA256, buf, &len), "X509 fingerprint error");
+  
+  int offset = 0;
+  char fp[SHA256_FINGERPRINT_SIZE];
+  std::memset(fp, 0, SHA256_FINGERPRINT_SIZE);
+  for (unsigned int i = 0; i < len; ++i) {
+    snprintf(fp + offset, 4, "%02X:", buf[i]);
+    offset += 3;
+  }
+  fp[offset - 1] = '\0';
+  return std::string(fp);
+}
+
+RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int days) {
+  gnutls_x509_crt_t crt;
+  gnutls_x509_privkey_t privkey;
+  check_gnutls(gnutls_x509_crt_init(&crt)); 
+  check_gnutls(gnutls_x509_privkey_init(&privkey)); 
+  
+  try {
+    const unsigned int bits = gnutls_sec_param_to_pk_bits(GNUTLS_PK_RSA, GNUTLS_SEC_PARAM_HIGH);
+    check_gnutls(gnutls_x509_privkey_generate(privkey, GNUTLS_PK_RSA, bits, 0), "Unable to generate key pair");
+  
+    gnutls_x509_crt_set_activation_time(crt, std::time(NULL) - 3600);
+    gnutls_x509_crt_set_expiration_time(crt, std::time(NULL) + days*24*3600);
+    gnutls_x509_crt_set_version(crt, 1);
+    gnutls_x509_crt_set_key(crt, privkey);
+    gnutls_x509_crt_set_dn_by_oid(crt, GNUTLS_OID_X520_COMMON_NAME, 0, common_name.data(), common_name.size());
+  
+    const size_t serialSize = 16;
+    char serial[serialSize];
+    gnutls_rnd(GNUTLS_RND_NONCE, serial, serialSize);
+    gnutls_x509_crt_set_serial(crt, serial, serialSize);
+
+    check_gnutls(gnutls_x509_crt_sign2(crt, crt, privkey, GNUTLS_DIG_SHA256, 0), "Unable to auto-sign certificate");
+
+    return RTCCertificate(crt, privkey);
+  }
+  catch(...) {
+    gnutls_x509_crt_deinit(crt);
+    gnutls_x509_privkey_deinit(privkey);
+    throw;
+  }
+}
+
+RTCCertificate::RTCCertificate(std::string crt_pem, std::string key_pem) :
+  creds_(create_creds(), delete_creds) {
+
+  gnutls_datum_t crt_datum; crt_datum.data = (unsigned char*)crt_pem.data(); crt_datum.size = crt_pem.size();
+  gnutls_datum_t key_datum; key_datum.data = (unsigned char*)key_pem.data(); key_datum.size = key_pem.size();
+  check_gnutls(gnutls_certificate_set_x509_key_mem(*creds_, &crt_datum, &key_datum, GNUTLS_X509_FMT_PEM), "Unable to import PEM");
+
+  gnutls_x509_crt_t *crt_list = NULL;
+  unsigned int crt_list_size = 0;
+  check_gnutls(gnutls_certificate_get_x509_crt(*creds_, 0, &crt_list, &crt_list_size));
+  assert(crt_list_size == 1);
+  try {
+    fingerprint_ = GenerateFingerprint(crt_list[0]);
+  }
+  catch(...) {
+    gnutls_x509_crt_deinit(crt_list[0]);
+    gnutls_free(crt_list);
+    throw;
+  }
+  gnutls_x509_crt_deinit(crt_list[0]);
+  gnutls_free(crt_list);
+}
+
+RTCCertificate::RTCCertificate(gnutls_x509_crt_t crt, gnutls_x509_privkey_t privkey) : 
+  creds_(create_creds(), delete_creds),
+  fingerprint_(GenerateFingerprint(crt)) {
+
+  check_gnutls(gnutls_certificate_set_x509_key(*creds_, &crt, 1, privkey), "Unable to set certificate and key pair in credentials");
+  gnutls_x509_crt_deinit(crt);
+  gnutls_x509_privkey_deinit(privkey);
+}
+
+}
+
+#else
 
 #include <openssl/pem.h>
 
@@ -90,13 +202,13 @@ static std::shared_ptr<X509> GenerateX509(std::shared_ptr<EVP_PKEY> evp_pkey, co
 
 static std::string GenerateFingerprint(std::shared_ptr<X509> x509) {
   unsigned int len;
-  unsigned char buf[4096] = {0};
+  unsigned char buf[EVP_MAX_MD_SIZE] = {0};
   if (!X509_digest(x509.get(), EVP_sha256(), buf, &len)) {
     throw std::runtime_error("GenerateFingerprint(): X509_digest error");
   }
 
-  if (len > SHA256_FINGERPRINT_SIZE) {
-    throw std::runtime_error("GenerateFingerprint(): fingerprint size too large for buffer!");
+  if (len != 32) {
+    throw std::runtime_error("GenerateFingerprint(): unexpected fingerprint size");
   }
 
   int offset = 0;
@@ -120,7 +232,7 @@ RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int 
     throw std::runtime_error("GenerateCertificate: !pkey || !rsa || !exponent");
   }
 
-  if (!BN_set_word(exponent.get(), 0x10001) || !RSA_generate_key_ex(rsa, 1024, exponent.get(), NULL) || !EVP_PKEY_assign_RSA(pkey.get(), rsa)) {
+  if (!BN_set_word(exponent.get(), 0x10001) || !RSA_generate_key_ex(rsa, 2048, exponent.get(), NULL) || !EVP_PKEY_assign_RSA(pkey.get(), rsa)) {
     throw std::runtime_error("GenerateCertificate: Error generating key");
   }
   auto cert = GenerateX509(pkey, common_name, days);
@@ -131,26 +243,26 @@ RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int 
   return RTCCertificate(cert, pkey);
 }
 
-RTCCertificate::RTCCertificate(std::string cert_pem, std::string pkey_pem) {
+RTCCertificate::RTCCertificate(std::string crt_pem, std::string key_pem) {
   /* x509 */
   BIO *bio = BIO_new(BIO_s_mem());
-  BIO_write(bio, cert_pem.c_str(), (int)cert_pem.length());
+  BIO_write(bio, crt_pem.c_str(), (int)crt_pem.length());
 
   x509_ = std::shared_ptr<X509>(PEM_read_bio_X509(bio, nullptr, 0, 0), X509_free);
   BIO_free(bio);
   if (!x509_) {
-    throw std::invalid_argument("Could not read cert_pem");
+    throw std::invalid_argument("Could not read certificate PEM");
   }
 
   /* evp_pkey */
   bio = BIO_new(BIO_s_mem());
-  BIO_write(bio, pkey_pem.c_str(), (int)pkey_pem.length());
+  BIO_write(bio, key_pem.c_str(), (int)key_pem.length());
 
   evp_pkey_ = std::shared_ptr<EVP_PKEY>(PEM_read_bio_PrivateKey(bio, nullptr, 0, 0), EVP_PKEY_free);
   BIO_free(bio);
 
   if (!evp_pkey_) {
-    throw std::invalid_argument("Could not read pkey_pem");
+    throw std::invalid_argument("Could not read key PEM");
   }
 
   fingerprint_ = GenerateFingerprint(x509_);
@@ -159,3 +271,6 @@ RTCCertificate::RTCCertificate(std::string cert_pem, std::string pkey_pem) {
 RTCCertificate::RTCCertificate(std::shared_ptr<X509> x509, std::shared_ptr<EVP_PKEY> evp_pkey)
     : x509_(x509), evp_pkey_(evp_pkey), fingerprint_(GenerateFingerprint(x509_)) {}
 }
+
+#endif
+

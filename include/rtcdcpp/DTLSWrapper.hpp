@@ -28,14 +28,18 @@
 #pragma once
 
 /**
- * Wrapper around OpenSSL DTLS.
+ * Wrapper around GnuTLS or OpenSSL DTLS.
  */
 
 #include "ChunkQueue.hpp"
 #include "PeerConnection.hpp"
 #include "Logging.hpp"
 
+#ifdef USE_GNUTLS
+#include <gnutls/gnutls.h>
+#else
 #include <openssl/ssl.h>
+#endif
 
 #include <thread>
 
@@ -75,11 +79,18 @@ class DTLSWrapper {
 
   // SSL Context
   std::mutex ssl_mutex;
+  bool handshake_complete;
+#ifdef USE_GNUTLS
+  static int CertificateCallback(gnutls_session_t session);
+  static ssize_t WriteCallback(gnutls_transport_ptr_t ptr, const void* data, size_t len);
+  static ssize_t ReadCallback(gnutls_transport_ptr_t ptr, void* data, size_t maxlen);
+  static int TimeoutCallback(gnutls_transport_ptr_t ptr, unsigned int ms);
+  gnutls_session_t session;
+#else
   SSL_CTX *ctx;
   SSL *ssl;
   BIO *in_bio, *out_bio;
-
-  bool handshake_complete;
+#endif
 
   std::function<void(ChunkPtr chunk)> decrypted_callback;
   std::function<void(ChunkPtr chunk)> encrypted_callback;

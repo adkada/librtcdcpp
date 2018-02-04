@@ -28,10 +28,15 @@
 #pragma once
 
 /**
- * Wrapper around OpenSSL Certs.
+ * Wrapper around GnuTLS or OpenSSL Certs.
  */
 
+#ifdef USE_GNUTLS
+#include <gnutls/x509.h>
+#else
 #include <openssl/x509.h>
+#endif
+
 #include <memory>
 #include <cstring>
 #include <string>
@@ -44,21 +49,31 @@ class RTCCertificate {
  public:
   static RTCCertificate GenerateCertificate(std::string common_name, int days);
 
-  RTCCertificate(std::string cert_pem, std::string pkey_pem);
-
+  RTCCertificate(std::string crt_pem, std::string key_pem);
+  
   const std::string &fingerprint() const { return fingerprint_; }
 
  protected:
   friend class DTLSWrapper;
 
+#ifdef USE_GNUTLS
+  gnutls_certificate_credentials_t creds() const { return *creds_.get(); }
+#else
   X509 *x509() const { return x509_.get(); }
   EVP_PKEY *evp_pkey() const { return evp_pkey_.get(); }
-
+#endif
+  
  private:
+#ifdef USE_GNUTLS
+  RTCCertificate(gnutls_x509_crt_t crt, gnutls_x509_privkey_t privkey);
+  std::shared_ptr<gnutls_certificate_credentials_t> creds_;
+#else
   RTCCertificate(std::shared_ptr<X509> x509, std::shared_ptr<EVP_PKEY> evp_pkey);
-
   std::shared_ptr<X509> x509_;
   std::shared_ptr<EVP_PKEY> evp_pkey_;
+#endif
+  
   std::string fingerprint_;
 };
+
 }

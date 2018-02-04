@@ -26,13 +26,197 @@
  */
 
 /**
- * Simple wrapper around OpenSSL DTLS.
+ * Simple wrapper around GnuTLS or OpenSSL DTLS.
  */
 
 #include "rtcdcpp/DTLSWrapper.hpp"
 #include "rtcdcpp/RTCCertificate.hpp"
 
 #include <iostream>
+#include <cassert>
+
+#ifdef USE_GNUTLS
+
+#include <gnutls/dtls.h>
+
+namespace rtcdcpp {
+
+using namespace std;
+
+static void check_gnutls(int ret, const std::string &message = "GnuTLS error") {
+  if(ret != GNUTLS_E_SUCCESS)
+    throw std::runtime_error(message + ": " + gnutls_strerror(ret));
+}
+
+DTLSWrapper::DTLSWrapper(PeerConnection *peer_connection) :
+  peer_connection(peer_connection),
+  certificate_(nullptr),
+  handshake_complete(false),
+  should_stop(false) {
+  if (peer_connection->config().certificates.size() != 1) {
+    throw std::runtime_error("At least one and only one certificate has to be set");
+  }
+  certificate_ = &peer_connection->config().certificates.front();
+  this->decrypted_callback = [](ChunkPtr x) {};
+  this->encrypted_callback = [](ChunkPtr x) {};
+}
+
+DTLSWrapper::~DTLSWrapper() {
+  Stop();
+}
+
+bool DTLSWrapper::Initialize() {
+  gnutls_certificate_set_verify_function(certificate_->creds(), CertificateCallback);
+  return true;
+}
+
+void DTLSWrapper::Start() {
+  unsigned int flags = GNUTLS_DATAGRAM;
+  flags|= (peer_connection->role == peer_connection->Server ? GNUTLS_SERVER : GNUTLS_CLIENT);
+  check_gnutls((gnutls_init(&session, flags)));
+  
+  const char *priorities = "SECURE128:-VERS-SSL3.0:-VERS-TLS1.0:-ARCFOUR-128";
+  const char *err_pos = NULL;
+  check_gnutls((gnutls_priority_set_direct(session, priorities, &err_pos)));
+  
+  gnutls_session_set_ptr(session, this);
+  gnutls_transport_set_ptr(session, this);
+  gnutls_transport_set_push_function(session, WriteCallback);
+  gnutls_transport_set_pull_function(session, ReadCallback);
+  gnutls_transport_set_pull_timeout_function(session, TimeoutCallback);
+
+  check_gnutls((gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, certificate_->creds())));
+  
+  this->decrypt_thread = std::thread([this]() {
+    SPDLOG_TRACE(logger, "Start(): Starting handshake - {}", std::this_thread::get_id());
+    check_gnutls(gnutls_handshake(session), "TLS handshake failed");
+    peer_connection->OnDTLSHandshakeDone();
+    
+    this->encrypt_thread = std::thread(&DTLSWrapper::RunEncrypt, this);
+    this->RunDecrypt();
+  });
+}
+
+void DTLSWrapper::Stop() {
+  this->should_stop = true;
+  gnutls_bye(session, GNUTLS_SHUT_RDWR);
+
+  encrypt_queue.Stop();
+  if (this->encrypt_thread.joinable()) {
+    this->encrypt_thread.join();
+  }
+  decrypt_queue.Stop();
+  if (this->decrypt_thread.joinable()) {
+    this->decrypt_thread.join();
+  }
+
+  gnutls_deinit(session);
+}
+
+void DTLSWrapper::SetEncryptedCallback(std::function<void(ChunkPtr chunk)> encrypted_callback) { this->encrypted_callback = encrypted_callback; }
+
+void DTLSWrapper::SetDecryptedCallback(std::function<void(ChunkPtr chunk)> decrypted_callback) { this->decrypted_callback = decrypted_callback; }
+
+void DTLSWrapper::DecryptData(ChunkPtr chunk) { this->decrypt_queue.push(chunk); }
+
+void DTLSWrapper::RunDecrypt() {
+  SPDLOG_TRACE(logger, "RunDecrypt()");
+
+  while (!should_stop) {
+    const unsigned int bufSize = 2048;
+    char buf[bufSize] = {0};
+    ssize_t ret = gnutls_record_recv(session, buf, bufSize);
+    // TODO: handle GNUTLS_E_REHANDSHAKE
+    if(ret < 0) throw std::runtime_error(gnutls_strerror(ret));
+    if(ret == 0) return;
+
+    std::cout << "DTLS: Calling decrypted callback with data of size: " << ret << std::endl;
+    this->decrypted_callback(std::make_shared<Chunk>(buf, ret));
+  }
+}
+
+void DTLSWrapper::EncryptData(ChunkPtr chunk) { this->encrypt_queue.push(chunk); }
+
+void DTLSWrapper::RunEncrypt() {
+  SPDLOG_TRACE(logger, "RunEncrypt()");
+  while (!this->should_stop) {
+    ChunkPtr chunk = this->encrypt_queue.wait_and_pop();
+    if (!chunk) return;
+
+    std::cout << "DTLS: Encrypting message of len - " << chunk->Length() << std::endl;
+    ssize_t ret = gnutls_record_send(session, chunk->Data(), (int)chunk->Length());
+    if(ret < 0) throw std::runtime_error(gnutls_strerror(ret));
+    if (ret != chunk->Length()) {
+        // TODO: Error handling
+    }
+  }
+}
+
+int DTLSWrapper::CertificateCallback(gnutls_session_t session) {
+  //DTLSWrapper *w = static_cast<DTLSWrapper*>(gnutls_session_get_ptr(session));
+  
+  if(gnutls_certificate_type_get(session) != GNUTLS_CRT_X509) {
+    return GNUTLS_E_CERTIFICATE_ERROR;
+  }
+
+  // Get peer's certificate
+  unsigned int count = 0;
+  const gnutls_datum_t *array = gnutls_certificate_get_peers(session, &count);
+  if(!array || count == 0) {
+    return GNUTLS_E_CERTIFICATE_ERROR;
+  }
+  
+  gnutls_x509_crt_t crt;
+  check_gnutls(gnutls_x509_crt_init(&crt));
+  int ret = gnutls_x509_crt_import(crt, &array[0], GNUTLS_X509_FMT_DER);
+  if(ret != GNUTLS_E_SUCCESS) {
+    gnutls_x509_crt_deinit(crt);
+    return GNUTLS_E_CERTIFICATE_ERROR;
+  }
+  
+  // TODO: verify crt fingerprint
+  
+  gnutls_x509_crt_deinit(crt);
+  return 0;
+}
+
+ssize_t DTLSWrapper::WriteCallback(gnutls_transport_ptr_t ptr, const void* data, size_t len) {
+  DTLSWrapper *w = static_cast<DTLSWrapper*>(ptr);
+  
+  std::cout<<"write cb "<<len<<std::endl;
+  if (len > 0) {
+    // std::cerr << "DTLS: Calling the encrypted data cb" << std::endl;
+    w->encrypted_callback(std::make_shared<Chunk>(data, len));
+  }
+  
+  return ssize_t(len);
+}
+
+ssize_t DTLSWrapper::ReadCallback(gnutls_transport_ptr_t ptr, void* data, size_t maxlen) {
+  DTLSWrapper *w = static_cast<DTLSWrapper*>(ptr);
+  
+  std::cout<<"read cb "<<maxlen<<std::endl;
+  while (!w->should_stop) {
+    ChunkPtr chunk = w->decrypt_queue.wait_and_pop();
+    if (!chunk) return 0;
+
+    ssize_t len = std::min(maxlen, chunk->Size());
+    std::memcpy(data, chunk->Data(), len);
+    return len;
+  }
+  
+  return -1;
+}
+
+int DTLSWrapper::TimeoutCallback(gnutls_transport_ptr_t ptr, unsigned int ms)
+{
+  // TODO
+  return 1;
+}
+
+}
+
+#else
 
 #include <openssl/bio.h>
 #include <openssl/ec.h>
@@ -76,14 +260,10 @@ static int verify_peer_certificate(int ok, X509_STORE_CTX *ctx) {
 }
 
 bool DTLSWrapper::Initialize() {
-  SSL_library_init();
-  OpenSSL_add_all_algorithms();
-
   ctx = SSL_CTX_new(DTLSv1_method());
   if (!ctx) {
     return false;
   }
-
   if (SSL_CTX_set_cipher_list(ctx, "ALL:!ADH:!LOW:!EXP:!MD5:@STRENGTH") != 1) {
     return false;
   }
@@ -251,4 +431,8 @@ void DTLSWrapper::RunEncrypt() {
     }
   }
 }
+
 }
+
+#endif
+

@@ -6,9 +6,9 @@ AR=$(CROSS)ar
 RM=rm -f
 CLIENTDIR=examples/websocket_client
 INCLUDES=$(shell pkg-config --cflags glib-2.0 gobject-2.0 nice) -Iinclude -Iusrsctp/usrsctplib -DINET -DINET6 -Ispdlog/include
-CPPFLAGS=-pthread -std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -O2 -DSPDLOG_TRACE_ON
+CPPFLAGS=-pthread -std=c++14 -fPIC -Wall -Wno-reorder -Wno-sign-compare -Og -g -DUSE_GNUTLS -DSPDLOG_TRACE_ON
 LDFLAGS=-pthread -shared
-LDLIBS=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice)
+LDLIBS=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice) -lgnutls
 
 SRCS=$(shell printf "%s " src/*.cpp)
 OBJS=$(subst .cpp,.o,$(SRCS)) 
