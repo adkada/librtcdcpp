@@ -16,7 +16,7 @@ Dependencies
 ------------
 
  - libnice - https://github.com/libnice/libnice
- - openssl - https://www.openssl.org/
+ - GnuTLS - https://www.gnutls.org/ or OpenSSL - https://www.openssl.org/
 
 Submodules:
  - usrsctp - https://github.com/sctplab/usrsctp
