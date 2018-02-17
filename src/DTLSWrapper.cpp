@@ -76,23 +76,23 @@ bool DTLSWrapper::Initialize() {
 void DTLSWrapper::Start() {
   unsigned int flags = GNUTLS_DATAGRAM;
   flags|= (peer_connection->role == peer_connection->Server ? GNUTLS_SERVER : GNUTLS_CLIENT);
-  check_gnutls((gnutls_init(&session, flags)));
+  check_gnutls((gnutls_init(&this->session, flags)));
   
   const char *priorities = "SECURE128:-VERS-SSL3.0:-VERS-TLS1.0:-ARCFOUR-128";
   const char *err_pos = NULL;
-  check_gnutls((gnutls_priority_set_direct(session, priorities, &err_pos)));
+  check_gnutls((gnutls_priority_set_direct(this->session, priorities, &err_pos)));
   
-  gnutls_session_set_ptr(session, this);
-  gnutls_transport_set_ptr(session, this);
-  gnutls_transport_set_push_function(session, WriteCallback);
-  gnutls_transport_set_pull_function(session, ReadCallback);
-  gnutls_transport_set_pull_timeout_function(session, TimeoutCallback);
+  gnutls_session_set_ptr(this->session, this);
+  gnutls_transport_set_ptr(this->session, this);
+  gnutls_transport_set_push_function(this->session, WriteCallback);
+  gnutls_transport_set_pull_function(this->session, ReadCallback);
+  gnutls_transport_set_pull_timeout_function(this->session, TimeoutCallback);
 
-  check_gnutls((gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, certificate_->creds())));
+  check_gnutls((gnutls_credentials_set(this->session, GNUTLS_CRD_CERTIFICATE, certificate_->creds())));
   
   this->decrypt_thread = std::thread([this]() {
     SPDLOG_TRACE(logger, "Start(): Starting handshake - {}", std::this_thread::get_id());
-    while(!check_gnutls(gnutls_handshake(session), "TLS handshake failed")) {}
+    while(!check_gnutls(gnutls_handshake(this->session), "TLS handshake failed")) {}
     peer_connection->OnDTLSHandshakeDone();
     
     this->encrypt_thread = std::thread(&DTLSWrapper::RunEncrypt, this);
@@ -102,7 +102,7 @@ void DTLSWrapper::Start() {
 
 void DTLSWrapper::Stop() {
   this->should_stop = true;
-  gnutls_bye(session, GNUTLS_SHUT_RDWR);
+  gnutls_bye(this->session, GNUTLS_SHUT_RDWR);
 
   encrypt_queue.Stop();
   if (this->encrypt_thread.joinable()) {
@@ -113,7 +113,7 @@ void DTLSWrapper::Stop() {
     this->decrypt_thread.join();
   }
 
-  gnutls_deinit(session);
+  gnutls_deinit(this->session);
 }
 
 void DTLSWrapper::SetEncryptedCallback(std::function<void(ChunkPtr chunk)> encrypted_callback) { this->encrypted_callback = encrypted_callback; }
@@ -125,10 +125,10 @@ void DTLSWrapper::DecryptData(ChunkPtr chunk) { this->decrypt_queue.push(chunk);
 void DTLSWrapper::RunDecrypt() {
   SPDLOG_TRACE(logger, "RunDecrypt()");
 
-  while (!should_stop) {
+  while (!this->should_stop) {
     const unsigned int bufSize = 2048;
     char buf[bufSize] = {0};
-    ssize_t ret = gnutls_record_recv(session, buf, bufSize);
+    ssize_t ret = gnutls_record_recv(this->session, buf, bufSize);
     if(!check_gnutls(ret)) continue;
     if(ret == 0) break;
     this->decrypted_callback(std::make_shared<Chunk>(buf, ret));
@@ -139,15 +139,12 @@ void DTLSWrapper::EncryptData(ChunkPtr chunk) { this->encrypt_queue.push(chunk);
 
 void DTLSWrapper::RunEncrypt() {
   SPDLOG_TRACE(logger, "RunEncrypt()");
-  while (!should_stop) {
+  while (!this->should_stop) {
     ChunkPtr chunk = this->encrypt_queue.wait_and_pop();
     if (!chunk) break;
     while (!should_stop) {
-      ssize_t ret = gnutls_record_send(session, chunk->Data(), chunk->Length());
+      ssize_t ret = gnutls_record_send(this->session, chunk->Data(), chunk->Length());
       if(!check_gnutls(ret)) continue;
-      if (ret != chunk->Length()) {
-        // TODO: Error handling
-      }
       break;
     }
   }
@@ -203,7 +200,7 @@ ssize_t DTLSWrapper::ReadCallback(gnutls_transport_ptr_t ptr, void* data, size_t
 
 int DTLSWrapper::TimeoutCallback(gnutls_transport_ptr_t ptr, unsigned int ms)
 {
-  // TODO
+  // So ReadCallback is called
   return 1;
 }
 
@@ -317,7 +314,6 @@ void DTLSWrapper::Start() {
     }
   }
 
-  // std::cerr << "DTLS: handshake started, start encrypt/decrypt threads" << std::endl;
   this->encrypt_thread = std::thread(&DTLSWrapper::RunEncrypt, this);
   this->decrypt_thread = std::thread(&DTLSWrapper::RunDecrypt, this);
 }
@@ -350,15 +346,11 @@ void DTLSWrapper::RunDecrypt() {
     int read_bytes = 0;
     uint8_t buf[2048] = {0};
     ChunkPtr chunk = this->decrypt_queue.wait_and_pop();
-    if (!chunk) {
-      return;
-    }
+    if (!chunk) return;
     size_t cur_len = chunk->Length();
 
     {
       std::lock_guard<std::mutex> lock(this->ssl_mutex);
-
-      // std::cout << "DTLS: Decrypting data of size - " << chunk->Length() << std::endl;
       BIO_write(in_bio, chunk->Data(), (int)chunk->Length());
       read_bytes = SSL_read(ssl, buf, sizeof(buf));
 
@@ -381,16 +373,13 @@ void DTLSWrapper::RunDecrypt() {
       }
     }
 
-    // std::cerr << "Read this many bytes " << read_bytes << std::endl;
     if (read_bytes > 0) {
-      // std::cerr << "DTLS: Calling decrypted callback with data of size: " << read_bytes << std::endl;
       this->decrypted_callback(std::make_shared<Chunk>(buf, read_bytes));
     } else {
       // TODO: SSL error checking
     }
 
     if (should_notify) {
-      // std::cerr << "DTLS: handshake is done" << std::endl;
       should_notify = false;
       peer_connection->OnDTLSHandshakeDone();
     }
@@ -403,15 +392,12 @@ void DTLSWrapper::RunEncrypt() {
   SPDLOG_TRACE(logger, "RunEncrypt()");
   while (!this->should_stop) {
     ChunkPtr chunk = this->encrypt_queue.wait_and_pop();
-    if (!chunk) {
-      return;
-    }
+    if (!chunk) return;
 
-    // std::cerr << "DTLS: Encrypting message of len - " << chunk->Length() << std::endl;
     {
       std::lock_guard<std::mutex> lock(this->ssl_mutex);
       uint8_t buf[2048] = {0};
-      if (SSL_write(ssl, chunk->Data(), (int)chunk->Length()) != chunk->Length()) {
+      if (SSL_write(ssl, chunk->Data(), (int)chunk->Length()) <= 0) {
         // TODO: Error handling
       }
 
@@ -421,7 +407,6 @@ void DTLSWrapper::RunEncrypt() {
       }
 
       if (nbytes > 0) {
-        // std::cerr << "DTLS: Calling the encrypted data cb" << std::endl;
         this->encrypted_callback(std::make_shared<Chunk>(buf, nbytes));
       }
     }
