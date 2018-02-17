@@ -98,7 +98,7 @@ void PeerConnection::ParseOffer(std::string offer_sdp) {
 
   while (std::getline(ss, line)) {
     if (g_str_has_prefix(line.c_str(), "a=setup:")) {
-      std::size_t pos = line.find(":") + 1;
+      std::size_t pos = line.find(':') + 1;
       std::string setup = line.substr(pos);
       if (setup == "active\r" && this->role == Client) {
         this->role = Server;
@@ -108,9 +108,13 @@ void PeerConnection::ParseOffer(std::string offer_sdp) {
         // nothing to do
       }
     } else if (g_str_has_prefix(line.c_str(), "a=mid:")) {
-      std::size_t pos = line.find(":") + 1;
-      std::size_t end = line.find("\r");
+      std::size_t pos = line.find(':') + 1;
+      std::size_t end = line.find('\r');
       this->mid = line.substr(pos, end - pos);
+    } else if (g_str_has_prefix(line.c_str(), "a=fingerprint:sha-256")) {
+      std::size_t pos = line.find(' ') + 1;
+      std::size_t end = line.find('\r');
+      this->fingerprint = line.substr(pos, end - pos);
     }
   }
   nice->ParseRemoteSDP(offer_sdp);
@@ -127,6 +131,7 @@ std::string random_session_id() {
   }
   return result.str();
 }
+
 std::string PeerConnection::GenerateOffer() {
   std::stringstream sdp;
   std::string session_id = random_session_id();

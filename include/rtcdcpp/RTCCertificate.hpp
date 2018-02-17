@@ -50,15 +50,13 @@ class RTCCertificate {
   static RTCCertificate GenerateCertificate(std::string common_name, int days);
 
   RTCCertificate(std::string crt_pem, std::string key_pem);
-  
   const std::string &fingerprint() const { return fingerprint_; }
 
- protected:
-  friend class DTLSWrapper;
-
 #ifdef USE_GNUTLS
+  static std::string GenerateFingerprint(gnutls_x509_crt_t crt);
   gnutls_certificate_credentials_t creds() const { return *creds_.get(); }
 #else
+  static std::string GenerateFingerprint(X509 *x509);
   X509 *x509() const { return x509_.get(); }
   EVP_PKEY *evp_pkey() const { return evp_pkey_.get(); }
 #endif

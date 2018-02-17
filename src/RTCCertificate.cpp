@@ -58,23 +58,6 @@ static void delete_creds(gnutls_certificate_credentials_t *pcreds) {
   delete pcreds;
 }
 
-static std::string GenerateFingerprint(gnutls_x509_crt_t crt) {
-  const size_t bufSize = 32;
-  unsigned char buf[bufSize];
-  size_t len = bufSize;
-  check_gnutls(gnutls_x509_crt_get_fingerprint(crt, GNUTLS_DIG_SHA256, buf, &len), "X509 fingerprint error");
-  
-  int offset = 0;
-  char fp[SHA256_FINGERPRINT_SIZE];
-  std::memset(fp, 0, SHA256_FINGERPRINT_SIZE);
-  for (unsigned int i = 0; i < len; ++i) {
-    snprintf(fp + offset, 4, "%02X:", buf[i]);
-    offset += 3;
-  }
-  fp[offset - 1] = '\0';
-  return std::string(fp);
-}
-
 RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int days) {
   gnutls_x509_crt_t crt;
   gnutls_x509_privkey_t privkey;
@@ -105,6 +88,23 @@ RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int 
     gnutls_x509_privkey_deinit(privkey);
     throw;
   }
+}
+
+std::string RTCCertificate::GenerateFingerprint(gnutls_x509_crt_t crt) {
+  const size_t bufSize = 32;
+  unsigned char buf[bufSize];
+  size_t len = bufSize;
+  check_gnutls(gnutls_x509_crt_get_fingerprint(crt, GNUTLS_DIG_SHA256, buf, &len), "X509 fingerprint error");
+  
+  int offset = 0;
+  char fp[SHA256_FINGERPRINT_SIZE];
+  std::memset(fp, 0, SHA256_FINGERPRINT_SIZE);
+  for (unsigned int i = 0; i < len; ++i) {
+    snprintf(fp + offset, 4, "%02X:", buf[i]);
+    offset += 3;
+  }
+  fp[offset - 1] = '\0';
+  return std::string(fp);
 }
 
 RTCCertificate::RTCCertificate(std::string crt_pem, std::string key_pem) :
@@ -200,28 +200,6 @@ static std::shared_ptr<X509> GenerateX509(std::shared_ptr<EVP_PKEY> evp_pkey, co
   return x509;
 }
 
-static std::string GenerateFingerprint(std::shared_ptr<X509> x509) {
-  unsigned int len;
-  unsigned char buf[EVP_MAX_MD_SIZE] = {0};
-  if (!X509_digest(x509.get(), EVP_sha256(), buf, &len)) {
-    throw std::runtime_error("GenerateFingerprint(): X509_digest error");
-  }
-
-  if (len != 32) {
-    throw std::runtime_error("GenerateFingerprint(): unexpected fingerprint size");
-  }
-
-  int offset = 0;
-  char fp[SHA256_FINGERPRINT_SIZE];
-  memset(fp, 0, SHA256_FINGERPRINT_SIZE);
-  for (unsigned int i = 0; i < len; ++i) {
-    snprintf(fp + offset, 4, "%02X:", buf[i]);
-    offset += 3;
-  }
-  fp[offset - 1] = '\0';
-  return std::string(fp);
-}
-
 RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int days) {
   std::shared_ptr<EVP_PKEY> pkey(EVP_PKEY_new(), EVP_PKEY_free);
   RSA *rsa = RSA_new();
@@ -241,6 +219,28 @@ RTCCertificate RTCCertificate::GenerateCertificate(std::string common_name, int 
     throw std::runtime_error("GenerateCertificate: Error in GenerateX509");
   }
   return RTCCertificate(cert, pkey);
+}
+
+std::string RTCCertificate::GenerateFingerprint(X509 *x509) {
+  unsigned int len;
+  unsigned char buf[EVP_MAX_MD_SIZE] = {0};
+  if (!X509_digest(x509, EVP_sha256(), buf, &len)) {
+    throw std::runtime_error("GenerateFingerprint(): X509_digest error");
+  }
+
+  if (len != 32) {
+    throw std::runtime_error("GenerateFingerprint(): unexpected fingerprint size");
+  }
+
+  int offset = 0;
+  char fp[SHA256_FINGERPRINT_SIZE];
+  memset(fp, 0, SHA256_FINGERPRINT_SIZE);
+  for (unsigned int i = 0; i < len; ++i) {
+    snprintf(fp + offset, 4, "%02X:", buf[i]);
+    offset += 3;
+  }
+  fp[offset - 1] = '\0';
+  return std::string(fp);
 }
 
 RTCCertificate::RTCCertificate(std::string crt_pem, std::string key_pem) {
@@ -265,11 +265,11 @@ RTCCertificate::RTCCertificate(std::string crt_pem, std::string key_pem) {
     throw std::invalid_argument("Could not read key PEM");
   }
 
-  fingerprint_ = GenerateFingerprint(x509_);
+  fingerprint_ = GenerateFingerprint(x509_.get());
 }
 
 RTCCertificate::RTCCertificate(std::shared_ptr<X509> x509, std::shared_ptr<EVP_PKEY> evp_pkey)
-    : x509_(x509), evp_pkey_(evp_pkey), fingerprint_(GenerateFingerprint(x509_)) {}
+    : x509_(x509), evp_pkey_(evp_pkey), fingerprint_(GenerateFingerprint(x509_.get())) {}
 }
 
 #endif

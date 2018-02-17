@@ -154,7 +154,7 @@ void DTLSWrapper::RunEncrypt() {
 }
 
 int DTLSWrapper::CertificateCallback(gnutls_session_t session) {
-  //DTLSWrapper *w = static_cast<DTLSWrapper*>(gnutls_session_get_ptr(session));
+  DTLSWrapper *w = static_cast<DTLSWrapper*>(gnutls_session_get_ptr(session));
   
   if(gnutls_certificate_type_get(session) != GNUTLS_CRT_X509) {
     return GNUTLS_E_CERTIFICATE_ERROR;
@@ -175,10 +175,10 @@ int DTLSWrapper::CertificateCallback(gnutls_session_t session) {
     return GNUTLS_E_CERTIFICATE_ERROR;
   }
   
-  // TODO: verify crt fingerprint
-  
+  std::string fingerprint = RTCCertificate::GenerateFingerprint(crt);
   gnutls_x509_crt_deinit(crt);
-  return 0;
+  
+  return fingerprint == w->peer_connection->remoteFingerprint() ? GNUTLS_E_SUCCESS : GNUTLS_E_CERTIFICATE_ERROR;
 }
 
 ssize_t DTLSWrapper::WriteCallback(gnutls_transport_ptr_t ptr, const void* data, size_t len) {
@@ -219,6 +219,8 @@ namespace rtcdcpp {
 
 using namespace std;
 
+int DTLSWrapper::wrapper_ex_idx = -1;
+
 DTLSWrapper::DTLSWrapper(PeerConnection *peer_connection)
     : peer_connection(peer_connection), certificate_(nullptr), handshake_complete(false), should_stop(false) {
   if (peer_connection->config().certificates.size() != 1) {
@@ -247,11 +249,6 @@ DTLSWrapper::~DTLSWrapper() {
   }
 }
 
-static int verify_peer_certificate(int ok, X509_STORE_CTX *ctx) {
-  // XXX: This function should ask the user if they trust the cert
-  return 1;
-}
-
 bool DTLSWrapper::Initialize() {
   ctx = SSL_CTX_new(DTLSv1_method());
   if (!ctx) {
@@ -262,7 +259,8 @@ bool DTLSWrapper::Initialize() {
   }
 
   SSL_CTX_set_read_ahead(ctx, 1);
-  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, verify_peer_certificate);
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, CertificateCallback);
+  SSL_CTX_set_verify_depth(ctx, 1);
   SSL_CTX_use_PrivateKey(ctx, certificate_->evp_pkey());
   SSL_CTX_use_certificate(ctx, certificate_->x509());
 
@@ -293,6 +291,11 @@ bool DTLSWrapper::Initialize() {
   SSL_set_options(ssl, SSL_OP_SINGLE_ECDH_USE);
   SSL_set_tmp_ecdh(ssl, ecdh.get());
 
+  if(wrapper_ex_idx == -1) {
+    wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  }
+  SSL_set_ex_data(ssl, wrapper_ex_idx, this);
+  
   return true;
 }
 
@@ -423,6 +426,16 @@ void DTLSWrapper::RunEncrypt() {
       }
     }
   }
+}
+
+int DTLSWrapper::CertificateCallback(int preverify_ok, X509_STORE_CTX *ctx) {
+  SSL *ssl = static_cast<SSL*>(X509_STORE_CTX_get_ex_data(ctx, SSL_get_ex_data_X509_STORE_CTX_idx()));
+  DTLSWrapper *w = static_cast<DTLSWrapper*>(SSL_get_ex_data(ssl, DTLSWrapper::wrapper_ex_idx));
+  
+  X509 *crt = X509_STORE_CTX_get_current_cert(ctx);
+  std::string fingerprint = RTCCertificate::GenerateFingerprint(crt);
+  
+  return fingerprint == w->peer_connection->remoteFingerprint() ? 1 : 0;
 }
 
 }

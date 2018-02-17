@@ -75,6 +75,7 @@ class PeerConnection {
   virtual ~PeerConnection();
 
   const RTCConfiguration &config() { return config_; }
+  const std::string &remoteFingerprint() { return fingerprint; }
 
   /**
    *
@@ -137,6 +138,7 @@ class PeerConnection {
   const DataChannelCallbackPtr new_channel_cb;
 
   std::string mid;
+  std::string fingerprint;
 
   enum Role { Client, Server } role = Client;
 

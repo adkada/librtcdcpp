@@ -87,6 +87,8 @@ class DTLSWrapper {
   static int TimeoutCallback(gnutls_transport_ptr_t ptr, unsigned int ms);
   gnutls_session_t session;
 #else
+  static int CertificateCallback(int preverify_ok, X509_STORE_CTX *ctx);
+  static int wrapper_ex_idx;
   SSL_CTX *ctx;
   SSL *ssl;
   BIO *in_bio, *out_bio;
