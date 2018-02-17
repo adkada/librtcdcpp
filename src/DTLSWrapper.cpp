@@ -43,9 +43,12 @@ namespace rtcdcpp {
 
 using namespace std;
 
-static void check_gnutls(int ret, const std::string &message = "GnuTLS error") {
-  if(ret != GNUTLS_E_SUCCESS)
+static bool check_gnutls(int ret, const std::string &message = "GnuTLS error") {
+  if(ret < 0) {
+    if(!gnutls_error_is_fatal(ret)) return false;
     throw std::runtime_error(message + ": " + gnutls_strerror(ret));
+  }
+  return true;
 }
 
 DTLSWrapper::DTLSWrapper(PeerConnection *peer_connection) :
@@ -89,7 +92,7 @@ void DTLSWrapper::Start() {
   
   this->decrypt_thread = std::thread([this]() {
     SPDLOG_TRACE(logger, "Start(): Starting handshake - {}", std::this_thread::get_id());
-    check_gnutls(gnutls_handshake(session), "TLS handshake failed");
+    while(!check_gnutls(gnutls_handshake(session), "TLS handshake failed")) {}
     peer_connection->OnDTLSHandshakeDone();
     
     this->encrypt_thread = std::thread(&DTLSWrapper::RunEncrypt, this);
@@ -126,11 +129,8 @@ void DTLSWrapper::RunDecrypt() {
     const unsigned int bufSize = 2048;
     char buf[bufSize] = {0};
     ssize_t ret = gnutls_record_recv(session, buf, bufSize);
-    // TODO: handle GNUTLS_E_REHANDSHAKE
-    if(ret < 0) throw std::runtime_error(gnutls_strerror(ret));
-    if(ret == 0) return;
-
-    std::cout << "DTLS: Calling decrypted callback with data of size: " << ret << std::endl;
+    if(!check_gnutls(ret)) continue;
+    if(ret == 0) break;
     this->decrypted_callback(std::make_shared<Chunk>(buf, ret));
   }
 }
@@ -139,15 +139,16 @@ void DTLSWrapper::EncryptData(ChunkPtr chunk) { this->encrypt_queue.push(chunk);
 
 void DTLSWrapper::RunEncrypt() {
   SPDLOG_TRACE(logger, "RunEncrypt()");
-  while (!this->should_stop) {
+  while (!should_stop) {
     ChunkPtr chunk = this->encrypt_queue.wait_and_pop();
-    if (!chunk) return;
-
-    std::cout << "DTLS: Encrypting message of len - " << chunk->Length() << std::endl;
-    ssize_t ret = gnutls_record_send(session, chunk->Data(), (int)chunk->Length());
-    if(ret < 0) throw std::runtime_error(gnutls_strerror(ret));
-    if (ret != chunk->Length()) {
+    if (!chunk) break;
+    while (!should_stop) {
+      ssize_t ret = gnutls_record_send(session, chunk->Data(), chunk->Length());
+      if(!check_gnutls(ret)) continue;
+      if (ret != chunk->Length()) {
         // TODO: Error handling
+      }
+      break;
     }
   }
 }
@@ -182,29 +183,21 @@ int DTLSWrapper::CertificateCallback(gnutls_session_t session) {
 
 ssize_t DTLSWrapper::WriteCallback(gnutls_transport_ptr_t ptr, const void* data, size_t len) {
   DTLSWrapper *w = static_cast<DTLSWrapper*>(ptr);
-  
-  std::cout<<"write cb "<<len<<std::endl;
   if (len > 0) {
-    // std::cerr << "DTLS: Calling the encrypted data cb" << std::endl;
     w->encrypted_callback(std::make_shared<Chunk>(data, len));
   }
-  
   return ssize_t(len);
 }
 
 ssize_t DTLSWrapper::ReadCallback(gnutls_transport_ptr_t ptr, void* data, size_t maxlen) {
   DTLSWrapper *w = static_cast<DTLSWrapper*>(ptr);
-  
-  std::cout<<"read cb "<<maxlen<<std::endl;
   while (!w->should_stop) {
     ChunkPtr chunk = w->decrypt_queue.wait_and_pop();
     if (!chunk) return 0;
-
     ssize_t len = std::min(maxlen, chunk->Size());
     std::memcpy(data, chunk->Data(), len);
     return len;
   }
-  
   return -1;
 }
 
