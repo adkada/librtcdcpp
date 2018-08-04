@@ -54,8 +54,9 @@ static bool check_gnutls(int ret, const std::string &message = "GnuTLS error") {
 DTLSWrapper::DTLSWrapper(PeerConnection *peer_connection) :
   peer_connection(peer_connection),
   certificate_(nullptr),
+  should_stop(false),
   handshake_complete(false),
-  should_stop(false) {
+  started(false) {
   if (peer_connection->config().certificates.size() != 1) {
     throw std::runtime_error("At least one and only one certificate has to be set");
   }
@@ -77,6 +78,7 @@ void DTLSWrapper::Start() {
   unsigned int flags = GNUTLS_DATAGRAM;
   flags|= (peer_connection->role == peer_connection->Server ? GNUTLS_SERVER : GNUTLS_CLIENT);
   check_gnutls(gnutls_init(&this->session, flags));
+  this->started = true;
   
   const char *priorities = "SECURE128:-VERS-SSL3.0:-VERS-TLS1.0:-ARCFOUR-128";
   const char *err_pos = NULL;
@@ -90,6 +92,7 @@ void DTLSWrapper::Start() {
 
   check_gnutls(gnutls_credentials_set(this->session, GNUTLS_CRD_CERTIFICATE, certificate_->creds()));
   
+  this->should_stop = false;
   this->decrypt_thread = std::thread([this]() {
     SPDLOG_TRACE(logger, "Start(): Starting handshake - {}", std::this_thread::get_id());
     while(!check_gnutls(gnutls_handshake(this->session), "TLS handshake failed")) {}
@@ -101,9 +104,12 @@ void DTLSWrapper::Start() {
 }
 
 void DTLSWrapper::Stop() {
-  this->should_stop = true;
+  if(!this->started) return;
+  this->started = false;
+  
   gnutls_bye(this->session, GNUTLS_SHUT_RDWR);
 
+  this->should_stop = true;
   encrypt_queue.Stop();
   if (this->encrypt_thread.joinable()) {
     this->encrypt_thread.join();
@@ -142,7 +148,7 @@ void DTLSWrapper::RunEncrypt() {
   while (!this->should_stop) {
     ChunkPtr chunk = this->encrypt_queue.wait_and_pop();
     if (!chunk) break;
-    while (!should_stop) {
+    while (!this->should_stop) {
       ssize_t ret = gnutls_record_send(this->session, chunk->Data(), chunk->Length());
       if(!check_gnutls(ret)) continue;
       break;
@@ -314,6 +320,7 @@ void DTLSWrapper::Start() {
     }
   }
 
+  this->should_stop = false;
   this->encrypt_thread = std::thread(&DTLSWrapper::RunEncrypt, this);
   this->decrypt_thread = std::thread(&DTLSWrapper::RunDecrypt, this);
 }

@@ -86,6 +86,7 @@ class DTLSWrapper {
   static ssize_t ReadCallback(gnutls_transport_ptr_t ptr, void* data, size_t maxlen);
   static int TimeoutCallback(gnutls_transport_ptr_t ptr, unsigned int ms);
   gnutls_session_t session;
+  bool started;
 #else
   static int CertificateCallback(int preverify_ok, X509_STORE_CTX *ctx);
   static int wrapper_ex_idx;

@@ -156,7 +156,8 @@ std::string PeerConnection::GenerateOffer() {
   sdp << "a=sctpmap:5000 webrtc-datachannel 262144\r\n";
 
   return sdp.str();
-  }
+}
+
 std::string PeerConnection::GenerateAnswer() {
   std::stringstream sdp;
   std::string session_id = random_session_id();
