@@ -46,11 +46,13 @@ SCTPWrapper::SCTPWrapper(DTLSEncryptCallbackPtr dtlsEncryptCB, MsgReceivedCallba
 
 SCTPWrapper::~SCTPWrapper() {
   Stop();
-
-  int tries = 0;
-  while (usrsctp_finish() != 0 && tries < 5) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+  
+  if (sock) {
+    usrsctp_shutdown(sock, SHUT_RDWR);
+    usrsctp_close(sock);
   }
+  usrsctp_deregister_address(this);
+  usrsctp_finish();
 }
 
 static uint16_t interested_events[] = {SCTP_ASSOC_CHANGE,         SCTP_PEER_ADDR_CHANGE,   SCTP_REMOTE_ERROR,          SCTP_SEND_FAILED,
@@ -300,21 +302,24 @@ bool SCTPWrapper::Initialize() {
 }
 
 void SCTPWrapper::Start() {
-  if (started) {
+  if (this->started) {
     logger->error("Start() - already started!");
     return;
   }
 
   SPDLOG_TRACE(logger, "Start()");
-  started = true;
-
+  this->started = true;
+  
+  this->should_stop = false;
   this->recv_thread = std::thread(&SCTPWrapper::RecvLoop, this);
   this->connect_thread = std::thread(&SCTPWrapper::RunConnect, this);
 }
 
 void SCTPWrapper::Stop() {
+  if(!this->started) return;
+  this->started = false;
+  
   this->should_stop = true;
-
   send_queue.Stop();
   recv_queue.Stop();
 
@@ -326,13 +331,6 @@ void SCTPWrapper::Stop() {
   if (this->connect_thread.joinable()) {
     this->connect_thread.join();
   }
-
-  if (sock) {
-    usrsctp_shutdown(sock, SHUT_RDWR);
-    usrsctp_close(sock);
-    sock = nullptr;
-  }
-  usrsctp_deregister_address(this);
 }
 
 void SCTPWrapper::ResetSCTPStream(uint16_t stream_id, uint16_t srs_flags) {
