@@ -338,6 +338,7 @@ void SCTPWrapper::Stop() {
 }
 
 void SCTPWrapper::ResetSCTPStream(uint16_t stream_id, uint16_t srs_flags) {
+  if(!this->started) return;
   struct sctp_reset_streams* stream_close = NULL;
   size_t no_of_streams = 1;
   size_t len = sizeof(stream_close) + sizeof(uint16_t);
