@@ -47,12 +47,16 @@ SCTPWrapper::SCTPWrapper(DTLSEncryptCallbackPtr dtlsEncryptCB, MsgReceivedCallba
 SCTPWrapper::~SCTPWrapper() {
   Stop();
   
-  if (sock) {
-    usrsctp_shutdown(sock, SHUT_RDWR);
-    usrsctp_close(sock);
+  if (this->sock) {
+    usrsctp_shutdown(this->sock, SHUT_RDWR);
+    usrsctp_close(this->sock);
+    this->sock = nullptr;
   }
+
   usrsctp_deregister_address(this);
   usrsctp_finish();
+  
+  createDC.notify_all();
 }
 
 static uint16_t interested_events[] = {SCTP_ASSOC_CHANGE,         SCTP_PEER_ADDR_CHANGE,   SCTP_REMOTE_ERROR,          SCTP_SEND_FAILED,
@@ -225,8 +229,8 @@ bool SCTPWrapper::Initialize() {
   usrsctp_sysctl_set_sctp_ecn_enable(0);
   usrsctp_register_address(this);
 
-  sock = usrsctp_socket(AF_CONN, SOCK_STREAM, IPPROTO_SCTP, &SCTPWrapper::_OnSCTPForGS, NULL, 0, this);
-  if (!sock) {
+  this->sock = usrsctp_socket(AF_CONN, SOCK_STREAM, IPPROTO_SCTP, &SCTPWrapper::_OnSCTPForGS, NULL, 0, this);
+  if (!this->sock) {
     logger->error("Could not create usrsctp_socket. errno={}", errno);
     return false;
   }
@@ -413,6 +417,7 @@ void SCTPWrapper::SendACK(uint8_t chan_type, uint32_t reliability) {
 void SCTPWrapper::CreateDCForSCTP(std::string label, std::string protocol, uint8_t chan_type, uint32_t reliability) {
   std::unique_lock<std::mutex> l2(createDCMtx);
   while (!this->readyDataChannel) {
+    if(!this->sock) return;
     createDC.wait(l2);
   }
   struct sctp_sndinfo sinfo = {0};
