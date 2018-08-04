@@ -76,11 +76,11 @@ bool DTLSWrapper::Initialize() {
 void DTLSWrapper::Start() {
   unsigned int flags = GNUTLS_DATAGRAM;
   flags|= (peer_connection->role == peer_connection->Server ? GNUTLS_SERVER : GNUTLS_CLIENT);
-  check_gnutls((gnutls_init(&this->session, flags)));
+  check_gnutls(gnutls_init(&this->session, flags));
   
   const char *priorities = "SECURE128:-VERS-SSL3.0:-VERS-TLS1.0:-ARCFOUR-128";
   const char *err_pos = NULL;
-  check_gnutls((gnutls_priority_set_direct(this->session, priorities, &err_pos)));
+  check_gnutls(gnutls_priority_set_direct(this->session, priorities, &err_pos), "Unable to set TLS priorities");
   
   gnutls_session_set_ptr(this->session, this);
   gnutls_transport_set_ptr(this->session, this);
@@ -88,7 +88,7 @@ void DTLSWrapper::Start() {
   gnutls_transport_set_pull_function(this->session, ReadCallback);
   gnutls_transport_set_pull_timeout_function(this->session, TimeoutCallback);
 
-  check_gnutls((gnutls_credentials_set(this->session, GNUTLS_CRD_CERTIFICATE, certificate_->creds())));
+  check_gnutls(gnutls_credentials_set(this->session, GNUTLS_CRD_CERTIFICATE, certificate_->creds()));
   
   this->decrypt_thread = std::thread([this]() {
     SPDLOG_TRACE(logger, "Start(): Starting handshake - {}", std::this_thread::get_id());
