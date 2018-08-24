@@ -271,6 +271,7 @@ void PeerConnection::HandleNewDataChannel(ChunkPtr chunk, uint16_t sid) {
   this->sctp->SendACK(open_msg.chan_type, open_msg.reliability);
   if (this->new_channel_cb) {
     this->new_channel_cb(new_channel);
+    new_channel->OnOpen();
   } else {
     logger->warn("No new channel callback, ignoring new channel");
   }
