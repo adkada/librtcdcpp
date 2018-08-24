@@ -243,7 +243,7 @@ void PeerConnection::OnSCTPMsgReceived(ChunkPtr chunk, uint16_t sid, uint32_t pp
 std::shared_ptr<DataChannel> PeerConnection::GetChannel(uint16_t sid) {
   auto iter = data_channels.find(sid);
   if (iter != data_channels.end()) {
-    return data_channels[sid];
+    return iter->second;
   }
 
   return std::shared_ptr<DataChannel>();
@@ -286,17 +286,12 @@ void PeerConnection::HandleDataChannelClose(uint16_t sid) {
 }
 
 void PeerConnection::HandleDataChannelAck(uint16_t sid) {
-  auto new_channel = GetChannel(sid);
-  if (this->new_channel_cb) {
-    this->new_channel_cb(new_channel);
-  } else {
-    logger->warn("No new channel callback, ignoring new channel");
-  }
-  if (!new_channel) {
+  auto cur_channel = GetChannel(sid);
+  if (!cur_channel) {
     logger->warn("Cannot find the datachannel for sid {}", sid);
-  } else {
-    new_channel->OnOpen();
+    return;
   }
+  cur_channel->OnOpen();
 }  
 
 void PeerConnection::HandleStringMessage(ChunkPtr chunk, uint16_t sid) {
@@ -362,7 +357,7 @@ std::shared_ptr<DataChannel> PeerConnection::CreateDataChannel(std::string label
   auto new_channel = std::make_shared<DataChannel>(this, sid, chan_type, label, protocol, reliability);
   data_channels[sid] = new_channel;
 
-  std::thread create_dc = std::thread(&SCTPWrapper::CreateDCForSCTP, sctp.get(), label, protocol, chan_type, reliability);
+  std::thread create_dc(&SCTPWrapper::CreateDCForSCTP, sctp.get(), label, protocol, chan_type, reliability);
   logger->info("Spawning create_dc thread");
   create_dc.detach();
   return new_channel;
