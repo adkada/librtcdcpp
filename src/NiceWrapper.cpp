@@ -118,7 +118,7 @@ void NiceWrapper::OnIceReady() { this->peer_connection->OnIceReady(); }
 
 void new_selected_pair(NiceAgent *agent, guint stream_id, guint component_id, NiceCandidate *lcandidate, NiceCandidate *rcandidate,
                        gpointer user_data) {
-  GetLogger("librtcpp.Nice")->error("ICE: new selected pair");
+  GetLogger("librtcpp.Nice")->info("ICE: new selected pair");
   NiceWrapper *nice = (NiceWrapper *)user_data;
   nice->OnSelectedPair();
 }
