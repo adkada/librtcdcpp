@@ -107,7 +107,7 @@ int main() {
         std::cout << "Sending Answer: " << answer << "\n";
         ws.Send(Json::writeString(msgBuilder, answer));
       } else if (root["type"] == "candidate") {
-        pc->SetRemoteIceCandidate("a=" + root["msg"]["candidate"].asString());
+        pc->SetRemoteIceCandidate(root["msg"]["candidate"].asString());
       }
     } else {
       std::cout << "Json parse failed"

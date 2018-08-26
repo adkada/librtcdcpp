@@ -188,7 +188,7 @@ void PeerConnection::GatherCandidates() {
 
 bool PeerConnection::SetRemoteIceCandidate(string candidate_sdp) {
   if(candidate_sdp.empty()) return false;
-  return this->nice->SetRemoteIceCandidate(candidate_sdp);
+  return this->nice->SetRemoteIceCandidate("a=" + candidate_sdp);
 }
 
 bool PeerConnection::SetRemoteIceCandidates(vector<string> candidate_sdps) {
