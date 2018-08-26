@@ -65,6 +65,9 @@ class NiceWrapper {
   // Parse the remote SDP
   void ParseRemoteSDP(std::string remote_sdp);
 
+  // Start candidates gathering
+  void GatherCandidates();
+  
   // void SetRemoteCredentials(std::string username, std::string password);
 
   // Generate the local SDP

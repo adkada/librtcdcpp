@@ -94,6 +94,11 @@ class PeerConnection {
   std::string GenerateAnswer();
 
   /**
+   * Start gathering ICE candidates
+   */
+  void GatherCandidates();
+  
+  /**
   * Handle remote ICE Candidate.
   * Supports trickle ice candidates.
   */

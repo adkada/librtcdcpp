@@ -240,15 +240,17 @@ void NiceWrapper::ParseRemoteSDP(std::string remote_sdp) {
   } else {
     logger->info("ICE: Added {} Candidates", rc);
   }
+}
 
-  if (!nice_agent_gather_candidates(agent.get(), this->stream_id)) {
+void NiceWrapper::GatherCandidates() {
+  if (!nice_agent_gather_candidates(this->agent.get(), this->stream_id)) {
     throw std::runtime_error("ParseRemoteSDP: Error gathering candidates!");
   }
 }
 
 void NiceWrapper::SendData(ChunkPtr chunk) {
   if (this->stream_id == 0) {
-    SPDLOG_TRACE(logger, "ICE: ERROR sending data to unitialized nice context");
+    SPDLOG_TRACE(logger, "ICE: Error sending data to unitialized nice context");
     return;
   }
 

@@ -67,6 +67,8 @@ bool PeerConnection::Initialize() {
       std::bind(&DTLSWrapper::EncryptData, dtls.get(), std::placeholders::_1),
       std::bind(&PeerConnection::OnSCTPMsgReceived, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
 
+  this->mid = "data"; // default mid
+  
   if (!dtls->Initialize()) {
     logger->error("DTLS failure");
     return false;
@@ -145,7 +147,7 @@ std::string PeerConnection::GenerateOffer() {
   sdp << "m=application 54609 DTLS/SCTP 5000\r\n";  // XXX: hardcoded port
   sdp << "a=msid-semantic: WMS\r\n";
   sdp << "c=IN IP4 0.0.0.0\r\n";
-  //  sdp << "a=mid:data\r\n";
+  sdp << "a=mid:" << this->mid << "\r\n";
   sdp << "a=sendrecv\r\n";
   // sdp << "a=sctp-port:5000\r\n";
   // sdp << "a=max-message-size:100000\r\n";
@@ -180,9 +182,18 @@ std::string PeerConnection::GenerateAnswer() {
   return sdp.str();
 }
 
-bool PeerConnection::SetRemoteIceCandidate(string candidate_sdp) { return this->nice->SetRemoteIceCandidate(candidate_sdp); }
+void PeerConnection::GatherCandidates() {
+  this->nice->GatherCandidates();
+}
 
-bool PeerConnection::SetRemoteIceCandidates(vector<string> candidate_sdps) { return this->nice->SetRemoteIceCandidates(candidate_sdps); }
+bool PeerConnection::SetRemoteIceCandidate(string candidate_sdp) {
+  if(candidate_sdp.empty()) return false;
+  return this->nice->SetRemoteIceCandidate(candidate_sdp);
+}
+
+bool PeerConnection::SetRemoteIceCandidates(vector<string> candidate_sdps) {
+  return this->nice->SetRemoteIceCandidates(candidate_sdps);
+}
 
 void PeerConnection::OnLocalIceCandidate(std::string &ice_candidate) {
   if (this->ice_candidate_cb) {
