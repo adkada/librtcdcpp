@@ -32,6 +32,7 @@
 #include "rtcdcpp/SCTPWrapper.hpp"
 
 #include <iostream>
+#include <cstdarg>
 
 namespace rtcdcpp {
 
