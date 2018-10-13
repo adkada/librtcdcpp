@@ -3,7 +3,7 @@ CC=$(CROSS)gcc
 CXX=$(CROSS)g++
 AR=$(CROSS)ar
 RM=rm -f
-CPPFLAGS=-pthread -std=c++14 -Wall -Wno-reorder -Wno-sign-compare -Og -g -DSPDLOG_TRACE_ON
+CPPFLAGS=-pthread -std=c++14 -Wall -Wno-reorder -Wno-sign-compare -Og -g
 LDFLAGS=-pthread
 LDLIBS=$(shell pkg-config --libs glib-2.0 gobject-2.0 nice)
 INCLUDES=-I../../include -I../../spdlog/include
@@ -15,6 +15,13 @@ ifeq ($(USE_GNUTLS), 1)
 	LDLIBS+= -lgnutls
 else
 	LDLIBS+= -lssl -lcrypto
+endif
+
+USE_SPDLOG ?= 1
+ifeq ($(USE_SPDLOG), 1)
+	CPPFLAGS+= -DSPDLOG_DEBUG_ON
+else
+	CPPFLAGS+= -DSPDLOG_DISABLED
 endif
 
 SRCS=WebSocketWrapper.cpp easywsclient.cpp jsoncpp.cpp
